@@ -351,6 +351,10 @@
     #define configUSE_TASK_PREEMPTION_DISABLE    0
 #endif
 
+#ifndef configUSE_TASK_PRIORITIES
+    #define configUSE_TASK_PRIORITIES 1
+#endif
+
 #ifndef configUSE_ALTERNATIVE_API
     #define configUSE_ALTERNATIVE_API    0
 #endif
