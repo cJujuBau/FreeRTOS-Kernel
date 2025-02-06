@@ -533,6 +533,10 @@
 
 #endif /* configUSE_TIMERS */
 
+#ifndef configUSE_SCHEDULER_FIFO
+    #define configUSE_SCHEDULER_FIFO 0
+#endif /* configUSE_SCHEDULER_FIFO */
+
 #ifndef portHAS_NESTED_INTERRUPTS
     #if defined( portSET_INTERRUPT_MASK_FROM_ISR ) && defined( portCLEAR_INTERRUPT_MASK_FROM_ISR )
         #define portHAS_NESTED_INTERRUPTS    1
