@@ -450,6 +450,10 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
     #if ( configUSE_POSIX_ERRNO == 1 )
         int iTaskErrno;
     #endif
+
+    #if ( configUSE_SCHEDULER_EDF == 1)
+        TickType_t xRelativeDeadline; /**< The relative deadline of the task. */
+    #endif
 } tskTCB;
 
 /* The old tskTCB name is maintained above then typedefed to the new TCB_t name
@@ -768,12 +772,22 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
  * the task if it is created successfully. Otherwise, returns NULL.
  */
 #if ( configSUPPORT_DYNAMIC_ALLOCATION == 1 )
+    #if ( configUSE_SCHEDULER_EDF == 1)
+        static TCB_t * prvCreateTask( TaskFunction_t pxTaskCode,
+                                      const char * const pcName,
+                                      const configSTACK_DEPTH_TYPE uxStackDepth,
+                                      void * const pvParameters,
+                                      UBaseType_t uxPriority,
+                                      TaskHandle_t * const pxCreatedTask,
+                                      TickType_t xRelativeDeadline ) PRIVILEGED_FUNCTION;
+    #else /* configUSE_SCHEDULER_EDF */
     static TCB_t * prvCreateTask( TaskFunction_t pxTaskCode,
                                   const char * const pcName,
                                   const configSTACK_DEPTH_TYPE uxStackDepth,
                                   void * const pvParameters,
                                   UBaseType_t uxPriority,
                                   TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
+    #endif /* configUSE_SCHEDULER_EDF */
 #endif /* #if ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) */
 
 /*
@@ -1640,6 +1654,109 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
 /*-----------------------------------------------------------*/
 
 #if ( configSUPPORT_DYNAMIC_ALLOCATION == 1 )
+
+#if ( configUSE_SCHEDULER_EDF == 1 )
+    static TCB_t * prvCreateTask( TaskFunction_t pxTaskCode,
+                                  const char * const pcName,
+                                  const configSTACK_DEPTH_TYPE uxStackDepth,
+                                  void * const pvParameters,
+                                  UBaseType_t uxPriority,
+                                  TaskHandle_t * const pxCreatedTask,
+                                  TickType_t xRelativeDeadline )
+    {
+        TCB_t * pxNewTCB;
+
+        /* If the stack grows down then allocate the stack then the TCB so the stack
+         * does not grow into the TCB.  Likewise if the stack grows up then allocate
+         * the TCB then the stack. */
+        #if ( portSTACK_GROWTH > 0 )
+        {
+            /* Allocate space for the TCB.  Where the memory comes from depends on
+             * the implementation of the port malloc function and whether or not static
+             * allocation is being used. */
+            /* MISRA Ref 11.5.1 [Malloc memory assignment] */
+            /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
+            /* coverity[misra_c_2012_rule_11_5_violation] */
+            pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) );
+
+            if( pxNewTCB != NULL )
+            {
+                ( void ) memset( ( void * ) pxNewTCB, 0x00, sizeof( TCB_t ) );
+
+                /* Allocate space for the stack used by the task being created.
+                 * The base of the stack memory stored in the TCB so the task can
+                 * be deleted later if required. */
+                /* MISRA Ref 11.5.1 [Malloc memory assignment] */
+                /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
+                /* coverity[misra_c_2012_rule_11_5_violation] */
+                pxNewTCB->pxStack = ( StackType_t * ) pvPortMallocStack( ( ( ( size_t ) uxStackDepth ) * sizeof( StackType_t ) ) );
+
+                if( pxNewTCB->pxStack == NULL )
+                {
+                    /* Could not allocate the stack.  Delete the allocated TCB. */
+                    vPortFree( pxNewTCB );
+                    pxNewTCB = NULL;
+                }
+            }
+        }
+        #else /* portSTACK_GROWTH */
+        {
+            StackType_t * pxStack;
+
+            /* Allocate space for the stack used by the task being created. */
+            /* MISRA Ref 11.5.1 [Malloc memory assignment] */
+            /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
+            /* coverity[misra_c_2012_rule_11_5_violation] */
+            pxStack = pvPortMallocStack( ( ( ( size_t ) uxStackDepth ) * sizeof( StackType_t ) ) );
+
+            if( pxStack != NULL )
+            {
+                /* Allocate space for the TCB. */
+                /* MISRA Ref 11.5.1 [Malloc memory assignment] */
+                /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
+                /* coverity[misra_c_2012_rule_11_5_violation] */
+                pxNewTCB = ( TCB_t * ) pvPortMalloc( sizeof( TCB_t ) );
+
+                if( pxNewTCB != NULL )
+                {
+                    ( void ) memset( ( void * ) pxNewTCB, 0x00, sizeof( TCB_t ) );
+
+                    /* Store the stack location in the TCB. */
+                    pxNewTCB->pxStack = pxStack;
+                }
+                else
+                {
+                    /* The stack cannot be used as the TCB was not created.  Free
+                     * it again. */
+                    vPortFreeStack( pxStack );
+                }
+            }
+            else
+            {
+                pxNewTCB = NULL;
+            }
+        }
+        #endif /* portSTACK_GROWTH */
+
+        if( pxNewTCB != NULL )
+        {
+            #if ( tskSTATIC_AND_DYNAMIC_ALLOCATION_POSSIBLE != 0 )
+            {
+                /* Tasks can be created statically or dynamically, so note this
+                 * task was created dynamically in case it is later deleted. */
+                pxNewTCB->ucStaticallyAllocated = tskDYNAMICALLY_ALLOCATED_STACK_AND_TCB;
+            }
+            #endif /* tskSTATIC_AND_DYNAMIC_ALLOCATION_POSSIBLE */
+
+            prvInitialiseNewTask( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask, pxNewTCB, NULL );
+        }
+
+        pxNewTCB->xRelativeDeadline = xRelativeDeadline;
+
+        return pxNewTCB;
+    }
+
+#else /* configUSE_SCHEDULER_EDF */
     static TCB_t * prvCreateTask( TaskFunction_t pxTaskCode,
                                   const char * const pcName,
                                   const configSTACK_DEPTH_TYPE uxStackDepth,
@@ -1736,8 +1853,12 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
 
         return pxNewTCB;
     }
+
+#endif /* configUSE_SCHEDULER_EDF */
+
 /*-----------------------------------------------------------*/
 
+#if ( configUSE_SCHEDULER_EDF == 0 )
     BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
                             const char * const pcName,
                             const configSTACK_DEPTH_TYPE uxStackDepth,
@@ -1773,6 +1894,47 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
 
         return xReturn;
     }
+
+#else 
+
+    BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
+                            const char * const pcName,
+                            const configSTACK_DEPTH_TYPE uxStackDepth,
+                            void * const pvParameters,
+                            UBaseType_t uxPriority,
+                            TaskHandle_t * const pxCreatedTask,
+                            TickType_t xRelativeDeadline )
+    {
+        TCB_t * pxNewTCB;
+        BaseType_t xReturn;
+
+        traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask, xRelativeDeadline );
+
+        pxNewTCB = prvCreateTask( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask, xRelativeDeadline );
+
+        if( pxNewTCB != NULL )
+        {
+            #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
+            {
+                /* Set the task's affinity before scheduling it. */
+                pxNewTCB->uxCoreAffinityMask = configTASK_DEFAULT_CORE_AFFINITY;
+            }
+            #endif
+
+            prvAddNewTaskToReadyList( pxNewTCB );
+            xReturn = pdPASS;
+        }
+        else
+        {
+            xReturn = errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
+        }
+
+        traceRETURN_xTaskCreate( xReturn );
+
+        return xReturn;
+    }
+
+#endif /* configUSE_SCHEDULER_EDF */
 /*-----------------------------------------------------------*/
 
     #if ( ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )
@@ -3646,13 +3808,26 @@ static BaseType_t prvCreateIdleTasks( void )
         }
         #else /* if ( configSUPPORT_STATIC_ALLOCATION == 1 ) */
         {
-            /* The Idle task is being created using dynamically allocated RAM. */
-            xReturn = xTaskCreate( pxIdleTaskFunction,
-                                   cIdleName,
-                                   configMINIMAL_STACK_SIZE,
-                                   ( void * ) NULL,
-                                   portPRIVILEGE_BIT, /* In effect ( tskIDLE_PRIORITY | portPRIVILEGE_BIT ), but tskIDLE_PRIORITY is zero. */
-                                   &xIdleTaskHandles[ xCoreID ] );
+            #if ( configUSE_SCHEDULER_EDF == 1 )
+                
+                /* The Idle task is being created using dynamically allocated RAM. */
+                xReturn = xTaskCreate( pxIdleTaskFunction,
+                                    cIdleName,
+                                    configMINIMAL_STACK_SIZE,
+                                    ( void * ) NULL,
+                                    portPRIVILEGE_BIT, /* In effect ( tskIDLE_PRIORITY | portPRIVILEGE_BIT ), but tskIDLE_PRIORITY is zero. */
+                                    &xIdleTaskHandles[ xCoreID ],
+                                    NO_DEADLINE );
+
+            #else /*( configUSE_SCHEDULER_EDF == 0)*/
+                /* The Idle task is being created using dynamically allocated RAM. */
+                xReturn = xTaskCreate( pxIdleTaskFunction,
+                                    cIdleName,
+                                    configMINIMAL_STACK_SIZE,
+                                    ( void * ) NULL,
+                                    tskIDLE_PRIORITY | portPRIVILEGE_BIT,
+                                    &xIdleTaskHandles[ xCoreID ] );
+            #endif /*( configUSE_SCHEDULER_EDF == 1)*/
         }
         #endif /* configSUPPORT_STATIC_ALLOCATION */
 

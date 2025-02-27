@@ -52,7 +52,9 @@
 
 #define configIDLE_SHOULD_YIELD                 1
 
-#define configUSE_SCHEDULER_FIFO                    1
+// Choose the scheduler to use
+#define configUSE_SCHEDULER_EDF                     1
+#define configUSE_SCHEDULER_FIFO                    0
 
 /* Synchronization Related */
 #define configUSE_MUTEXES                       1

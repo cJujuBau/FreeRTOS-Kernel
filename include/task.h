@@ -156,6 +156,14 @@ typedef struct xTASK_PARAMETERS
     #if ( ( portUSING_MPU_WRAPPERS == 1 ) && ( configSUPPORT_STATIC_ALLOCATION == 1 ) )
         StaticTask_t * const pxTaskBuffer;
     #endif
+
+/* To be done: adapt existing code to integrate the following fields
+    #if ( configUSE_SCHEDULER_EDF == 1 )
+        TickType_t xRelativeDeadline;
+        TickType_t xAbsoluteDeadline;
+    #endif
+*/
+
 } TaskParameters_t;
 
 /* Used with the uxTaskGetSystemState() function to return the state of each task
@@ -382,12 +390,24 @@ typedef enum
  * \ingroup Tasks
  */
 #if ( configSUPPORT_DYNAMIC_ALLOCATION == 1 )
-    BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
-                            const char * const pcName,
-                            const configSTACK_DEPTH_TYPE uxStackDepth,
-                            void * const pvParameters,
-                            UBaseType_t uxPriority,
-                            TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
+    #if ( configUSE_SCHEDULER_EDF == 1 )
+        BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
+                                const char * const pcName,
+                                const configSTACK_DEPTH_TYPE uxStackDepth,
+                                void * const pvParameters,
+                                UBaseType_t uxPriority,
+                                TaskHandle_t * const pxCreatedTask,
+                                TickType_t xRelativeDeadline ) PRIVILEGED_FUNCTION;
+
+    #else /* configUSE_SCHEDULER_EDF */
+    
+        BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
+                                const char * const pcName,
+                                const configSTACK_DEPTH_TYPE uxStackDepth,
+                                void * const pvParameters,
+                                UBaseType_t uxPriority,
+                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
+    #endif /* configUSE_SCHEDULER_EDF */
 #endif
 
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )

@@ -537,6 +537,14 @@
     #define configUSE_SCHEDULER_FIFO 0
 #endif /* configUSE_SCHEDULER_FIFO */
 
+#ifndef configUSE_SCHEDULER_EDF
+    #define configUSE_SCHEDULER_EDF 0
+#endif /* configUSE_SCHEDULER_EDF */
+
+#if ( configUSE_SCHEDULER_EDF == 1 )
+    #define NO_DEADLINE -1
+#endif
+
 #ifndef portHAS_NESTED_INTERRUPTS
     #if defined( portSET_INTERRUPT_MASK_FROM_ISR ) && defined( portCLEAR_INTERRUPT_MASK_FROM_ISR )
         #define portHAS_NESTED_INTERRUPTS    1
@@ -1737,7 +1745,11 @@
 #endif
 
 #ifndef traceENTER_xTaskCreate
-    #define traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask )
+    #if ( configUSE_SCHEDULER_EDF)
+        #define traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask, xRelativeDeadline )
+    #else
+        #define traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask )
+    #endif /* (configUSE_SCHEDULER_EDF ) */
 #endif
 
 #ifndef traceRETURN_xTaskCreate
