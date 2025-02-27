@@ -542,7 +542,7 @@
 #endif /* configUSE_SCHEDULER_EDF */
 
 #if ( configUSE_SCHEDULER_EDF == 1 )
-    #define NO_DEADLINE 0
+    #define NO_DEADLINE -1
 #endif
 
 #ifndef portHAS_NESTED_INTERRUPTS
@@ -1745,11 +1745,7 @@
 #endif
 
 #ifndef traceENTER_xTaskCreate
-    #if ( configUSE_SCHEDULER_EDF)
-        #define traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask, xRelativeDeadline )
-    #else
-        #define traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask )
-    #endif /* (configUSE_SCHEDULER_EDF ) */
+    #define traceENTER_xTaskCreate( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask )
 #endif
 
 #ifndef traceRETURN_xTaskCreate
