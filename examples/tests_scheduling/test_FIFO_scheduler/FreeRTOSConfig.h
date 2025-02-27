@@ -52,7 +52,7 @@
 
 #define configIDLE_SHOULD_YIELD                 1
 
-#define configSCHEDULER_FIFO                    0
+#define configUSE_SCHEDULER_FIFO                    1
 
 /* Synchronization Related */
 #define configUSE_MUTEXES                       1

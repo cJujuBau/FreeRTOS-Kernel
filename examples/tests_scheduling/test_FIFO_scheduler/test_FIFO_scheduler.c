@@ -4,10 +4,6 @@
 #include "timers.h"
 #include "task.h"
 
-// Taille de pile et priorité des tâches
-#define STACK_SIZE configMINIMAL_STACK_SIZE
-#define TASK_PRIORITY 1
-
 // Prototypes des tâches
 void Task1(void *pvParameters);
 void Task2(void *pvParameters);
@@ -18,9 +14,9 @@ int main(void) {
     stdio_init_all();
 
     // Création des tâches avec la même priorité
-    xTaskCreate(Task1, "Task1", STACK_SIZE, NULL, TASK_PRIORITY, NULL);
-    xTaskCreate(Task2, "Task2", STACK_SIZE, NULL, TASK_PRIORITY, NULL);
-    xTaskCreate(Task3, "Task3", STACK_SIZE, NULL, TASK_PRIORITY, NULL);
+    xTaskCreate(Task1, "Task1", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    xTaskCreate(Task2, "Task2", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+    xTaskCreate(Task3, "Task3", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
 
     // Démarrer l'ordonnanceur
     vTaskStartScheduler();
