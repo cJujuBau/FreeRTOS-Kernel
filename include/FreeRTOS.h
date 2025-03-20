@@ -542,7 +542,15 @@
 #endif /* configUSE_SCHEDULER_EDF */
 
 #if ( configUSE_SCHEDULER_EDF == 1 )
-    #define NO_DEADLINE -1
+    #define NO_DEADLINE 1e10000
+
+    #ifndef configUSE_TIME_SLICING
+        #define configUSE_TIME_SLICING 0
+    #endif
+
+    #if( configUSE_TIME_SLICING == 1 )
+        #error configUSE_TIME_SLICING must be set to 0 when using the EDF scheduler.
+    #endif
 #endif
 
 #ifndef portHAS_NESTED_INTERRUPTS
@@ -631,6 +639,11 @@
 /* Called after a task has been selected to run.  pxCurrentTCB holds a pointer
  * to the task control block of the selected task. */
     #define traceTASK_SWITCHED_IN()
+#endif
+
+#ifndef traceTASK_MISSED_DEADLINE
+/* Called after a task has missed its deadline. */
+    #define traceTASK_MISSED_DEADLINE( pxCurrentTCB )
 #endif
 
 #ifndef traceSTARTING_SCHEDULER
@@ -858,6 +871,10 @@
 
 #ifndef traceTASK_PRIORITY_SET
     #define traceTASK_PRIORITY_SET( pxTask, uxNewPriority )
+#endif
+
+#ifndef traceTASK_DEADLINE_ATTACH
+    #define traceTASK_DEADLINE_ATTACH( pxTask, xNewDeadline )
 #endif
 
 #ifndef traceTASK_SUSPEND
@@ -1830,6 +1847,10 @@
 
 #ifndef traceRETURN_vTaskPrioritySet
     #define traceRETURN_vTaskPrioritySet()
+#endif
+
+#ifndef traceRETURN_vTaskAttachDeadline
+    #define traceRETURN_vTaskAttachDeadline()
 #endif
 
 #ifndef traceENTER_vTaskCoreAffinitySet
