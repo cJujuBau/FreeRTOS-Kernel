@@ -245,6 +245,16 @@
 
 /*-----------------------------------------------------------*/
 
+    #define taskSELECT_EARLIEST_DEADLINE_TASK()
+    do {
+        TickType_t xRelativeDeadline;
+
+        /**/
+    } while( 0 )
+
+
+/*-----------------------------------------------------------*/
+
 /* A port optimised version is provided, call it only if the TCB being reset
  * is being referenced from a ready list.  If it is referenced from a delayed
  * or suspended list then it won't be in a ready list. */
@@ -286,7 +296,22 @@
     do {                                                                                                   \
         traceMOVED_TASK_TO_READY_STATE( pxTCB );                                                           \
         taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                                                \
-        listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ); \
+        if ( configUSE_SCHEDULER_EDF == 1 ) {                                                            \
+            List_t *pxReadyList = &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] );                         \
+            ListItem_t *pxIterator;                                                                        \
+        const ListItem_t *pxEndMarker = listGET_END_MARKER( pxReadyList );                                 \
+            for (pxIterator = listGET_HEAD_ENTRY(pxReadyList); pxIterator != pxEndMarker; pxIterator = listGET_NEXT(pxIterator)) { \
+                TCB_t *pxCurrentTCB = (TCB_t *)listGET_LIST_ITEM_OWNER(pxIterator);                        \
+                if ((pxTCB->xRelativeDeadline < pxCurrentTCB->xRelativeDeadline) ||                        \
+                    ((pxTCB->xRelativeDeadline == pxCurrentTCB->xRelativeDeadline) &&                      \
+                     (pxTCB->uxPriority > pxCurrentTCB->uxPriority))) {                                    \
+                    break;                                                                                 \
+                }                                                                                          \
+            }                                                                                              \
+            listINSERT_BEFORE(pxIterator, &(pxTCB->xStateListItem));                                       \
+        } else {                                                                                            \
+            listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ); \
+        }                                                                                                  \
         tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB );                                                      \
     } while( 0 )
 /*-----------------------------------------------------------*/
@@ -1749,9 +1774,10 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             #endif /* tskSTATIC_AND_DYNAMIC_ALLOCATION_POSSIBLE */
 
             prvInitialiseNewTask( pxTaskCode, pcName, uxStackDepth, pvParameters, uxPriority, pxCreatedTask, pxNewTCB, NULL );
+
+            pxNewTCB->xRelativeDeadline = (xRelativeDeadline >= NO_DEADLINE) ? xRelativeDeadline : NO_DEADLINE;
         }
 
-        pxNewTCB->xRelativeDeadline = xRelativeDeadline;
 
         return pxNewTCB;
     }
