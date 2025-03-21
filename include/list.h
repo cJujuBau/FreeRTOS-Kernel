@@ -384,6 +384,17 @@ typedef struct xLIST
         ( ( pxList )->uxNumberOfItems ) = ( UBaseType_t ) ( ( ( pxList )->uxNumberOfItems ) + 1U ); \
     } while( 0 )
 
+#define listINSERT_BEFORE(pxIterator, pxNewListItem)          \
+    do {                                                      \
+        (pxNewListItem)->pxNext = (pxIterator);               \
+        (pxNewListItem)->pxPrevious = (pxIterator)->pxPrevious; \
+        (pxIterator)->pxPrevious->pxNext = (pxNewListItem);   \
+        (pxIterator)->pxPrevious = (pxNewListItem);           \
+        (pxNewListItem)->pxContainer = (pxIterator)->pxContainer; \
+        ((pxIterator)->pxContainer->uxNumberOfItems)++;       \
+    } while(0)
+
+
 /*
  * Access function to obtain the owner of the first entry in a list.  Lists
  * are normally sorted in ascending item value order.

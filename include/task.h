@@ -163,8 +163,13 @@ typedef struct xTASK_PARAMETERS
         TickType_t xAbsoluteDeadline;
     #endif
 */
-
 } TaskParameters_t;
+
+#if ( configUSE_SCHEDULER_EDF == 1 )
+    void vTaskMissedDeadline( TaskHandle_t xTask );
+    TickType_t xTaskGetRelativeDeadline( TaskHandle_t xTask );
+    void vTaskAttachDeadline( TaskHandle_t xTask, TickType_t xNewRelativeDeadline );
+#endif /* configUSE_SCHEDULER_EDF */
 
 /* Used with the uxTaskGetSystemState() function to return the state of each task
  * in the system. */
@@ -389,25 +394,13 @@ typedef enum
  * \defgroup xTaskCreate xTaskCreate
  * \ingroup Tasks
  */
-#if ( configSUPPORT_DYNAMIC_ALLOCATION == 1 )
-    #if ( configUSE_SCHEDULER_EDF == 1 )
-        BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
-                                const char * const pcName,
-                                const configSTACK_DEPTH_TYPE uxStackDepth,
-                                void * const pvParameters,
-                                UBaseType_t uxPriority,
-                                TaskHandle_t * const pxCreatedTask,
-                                TickType_t xRelativeDeadline ) PRIVILEGED_FUNCTION;
-
-    #else /* configUSE_SCHEDULER_EDF */
-    
-        BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
-                                const char * const pcName,
-                                const configSTACK_DEPTH_TYPE uxStackDepth,
-                                void * const pvParameters,
-                                UBaseType_t uxPriority,
-                                TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
-    #endif /* configUSE_SCHEDULER_EDF */
+#if ( configSUPPORT_DYNAMIC_ALLOCATION == 1 )    
+    BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
+                            const char * const pcName,
+                            const configSTACK_DEPTH_TYPE uxStackDepth,
+                            void * const pvParameters,
+                            UBaseType_t uxPriority,
+                            TaskHandle_t * const pxCreatedTask ) PRIVILEGED_FUNCTION;
 #endif
 
 #if ( ( configSUPPORT_DYNAMIC_ALLOCATION == 1 ) && ( configNUMBER_OF_CORES > 1 ) && ( configUSE_CORE_AFFINITY == 1 ) )

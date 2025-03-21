@@ -243,44 +243,6 @@
         listGET_OWNER_OF_NEXT_ENTRY( pxCurrentTCB, &( pxReadyTasksLists[ uxTopPriority ] ) );   \
     } while( 0 )
 
-
-/*-----------------------------------------------------------*/
-    #if ( configUSE_SCHEDULER_EDF == 1 )
-        #define taskSELECT_EARLIEST_DEADLINE_TASK()                                                     \
-            do {                                                                                        \
-                TickType_t xRelativeDeadline;                                                           \
-                UBaseType_t uxTopPriority = uxTopReadyPriority;                                         \
-                TCB_t *pxEarliestDeadlineTCB = NULL;                                                    \
-                                                                                                        \
-                /* Iterate through every ready list starting from the highest priority. */              \
-                while (uxTopPriority > tskIDLE_PRIORITY)                                                \
-                {                                                                                       \
-                    if (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) == pdFALSE)              \
-                    {                                                                                   \
-                        /* Get the TCB of the first task in the ready list. */                          \
-                        TCB_t *pxTCB = (TCB_t *)listGET_OWNER_OF_HEAD_ENTRY(&(pxReadyTasksLists[uxTopPriority])); \
-                                                                                                        \
-                        /* Check if this task has the earliest deadline or if there's a tie, */         \
-                        /* choose the one with the highest priority. */                                 \
-                        if (pxEarliestDeadlineTCB == NULL ||                                            \
-                            pxTCB->xRelativeDeadline < pxEarliestDeadlineTCB->xRelativeDeadline ||      \
-                            (pxTCB->xRelativeDeadline == pxEarliestDeadlineTCB->xRelativeDeadline &&    \
-                            pxTCB->uxPriority > pxEarliestDeadlineTCB->uxPriority))                    \
-                        {                                                                               \
-                            pxEarliestDeadlineTCB = pxTCB;                                              \
-                        }                                                                               \
-                    }                                                                                   \
-                    uxTopPriority--;                                                                    \
-                }                                                                                       \
-                                                                                                        \
-                /* Set the selected task as the current task. */                                        \
-                if (pxEarliestDeadlineTCB != NULL)                                                      \
-                {                                                                                       \
-                    pxCurrentTCB = pxEarliestDeadlineTCB;                                               \
-                }                                                                                       \
-            } while (0)
-    #endif /* configUSE_SCHEDULER_EDF */
-
 /*-----------------------------------------------------------*/
 
 /* A port optimised version is provided, call it only if the TCB being reset
@@ -295,6 +257,43 @@
     } while( 0 )
 
 #endif /* configUSE_PORT_OPTIMISED_TASK_SELECTION */
+
+/*-----------------------------------------------------------*/
+#if ( configUSE_SCHEDULER_EDF == 1 )
+    #define taskSELECT_EARLIEST_DEADLINE_TASK()                                                     \
+        do {                                                                                        \
+            TickType_t xRelativeDeadline;                                                           \
+            UBaseType_t uxTopPriority = uxTopReadyPriority;                                         \
+            TCB_t *pxEarliestDeadlineTCB = NULL;                                                    \
+                                                                                                    \
+            /* Iterate through every ready list starting from the highest priority. */              \
+            while (uxTopPriority > tskIDLE_PRIORITY)                                                \
+            {                                                                                       \
+                if (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) == pdFALSE)              \
+                {                                                                                   \
+                    /* Get the TCB of the first task in the ready list. */                          \
+                    TCB_t *pxTCB = (TCB_t *)listGET_OWNER_OF_HEAD_ENTRY(&(pxReadyTasksLists[uxTopPriority])); \
+                                                                                                    \
+                    /* Check if this task has the earliest deadline or if there's a tie, */         \
+                    /* choose the one with the highest priority. */                                 \
+                    if (pxEarliestDeadlineTCB == NULL ||                                            \
+                        pxTCB->xRelativeDeadline < pxEarliestDeadlineTCB->xRelativeDeadline ||      \
+                        (pxTCB->xRelativeDeadline == pxEarliestDeadlineTCB->xRelativeDeadline &&    \
+                        pxTCB->uxPriority > pxEarliestDeadlineTCB->uxPriority))                    \
+                    {                                                                               \
+                        pxEarliestDeadlineTCB = pxTCB;                                              \
+                    }                                                                               \
+                }                                                                                   \
+                uxTopPriority--;                                                                    \
+            }                                                                                       \
+                                                                                                    \
+            /* Set the selected task as the current task. */                                        \
+            if (pxEarliestDeadlineTCB != NULL)                                                      \
+            {                                                                                       \
+                pxCurrentTCB = pxEarliestDeadlineTCB;                                               \
+            }                                                                                       \
+        } while (0)
+#endif /* configUSE_SCHEDULER_EDF */
 
 /*-----------------------------------------------------------*/
 
@@ -653,6 +652,10 @@ static BaseType_t prvCreateIdleTasks( void );
  * automatically upon the creation of the first task.
  */
 static void prvInitialiseTaskLists( void ) PRIVILEGED_FUNCTION;
+
+#if ( configUSE_SCHEDULER_EDF == 1 )
+    void vTaskMissedDeadline( TCB_t *pxTCB );
+#endif /* configUSE_SCHEDULER_EDF */
 
 /*
  * The idle task, which as all tasks is implemented as a never ending loop.
@@ -4378,9 +4381,9 @@ BaseType_t xTaskResumeAll( void )
                                 {
                                     mtCOVERAGE_TEST_MARKER();
                                 }
+                            }
                             #else /* configUSE_SCHEDULER_EDF */
                             {
-                                }
                                 /* If the moved task has a priority higher than the current
                                 * task then a yield must be performed. */
                                 if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
@@ -5458,12 +5461,18 @@ BaseType_t xTaskIncrementTick( void )
 // TODO: Choose a behavior for when a task misses its deadline
 #if ( configUSE_SCHEDULER_EDF == 1 )
 
-    void vTaskMissedDeadline( TCB_t *pxTCB )
+    void vTaskMissedDeadline( TaskHandle_t xTask )
     {
+        TCB_t *pxTCB = xTask;
         traceTASK_MISSED_DEADLINE(pxTCB);
         pxTCB->xRelativeDeadline = NO_DEADLINE; // for now, we just discard the deadline
     }
 
+    TickType_t xTaskGetRelativeDeadline( TaskHandle_t xTask)
+    {
+        TCB_t * pxTCB = xTask;
+        return pxTCB->xRelativeDeadline;
+    }
 #endif /* configUSE_SCHEDULER_EDF */
 
 /*-----------------------------------------------------------*/

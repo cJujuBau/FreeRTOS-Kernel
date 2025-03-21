@@ -542,7 +542,7 @@
 #endif /* configUSE_SCHEDULER_EDF */
 
 #if ( configUSE_SCHEDULER_EDF == 1 )
-    #define NO_DEADLINE 1e10000
+    #define NO_DEADLINE 0xFFFFFFFFUL
 
     #ifndef configUSE_TIME_SLICING
         #define configUSE_TIME_SLICING 0
