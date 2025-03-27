@@ -168,6 +168,7 @@ typedef struct xTASK_PARAMETERS
 #if ( configUSE_SCHEDULER_EDF == 1 )
     void vTaskMissedDeadline( TaskHandle_t xTask );
     TickType_t xTaskGetRelativeDeadline( TaskHandle_t xTask );
+    TickType_t xTaskGetAbsoluteDeadline( TaskHandle_t xTask );
     void vTaskAttachDeadline( TaskHandle_t xTask, TickType_t xNewRelativeDeadline );
 #endif /* configUSE_SCHEDULER_EDF */
 

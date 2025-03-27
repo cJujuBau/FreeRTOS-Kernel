@@ -258,45 +258,6 @@
 
 #endif /* configUSE_PORT_OPTIMISED_TASK_SELECTION */
 
-/*-----------------------------------------------------------*/
-#if ( configUSE_SCHEDULER_EDF == 1 )
-    #define taskSELECT_EARLIEST_DEADLINE_TASK()                                                     \
-        do {                                                                                        \
-            TickType_t xRelativeDeadline;                                                           \
-            UBaseType_t uxTopPriority = uxTopReadyPriority;                                         \
-            TCB_t *pxEarliestDeadlineTCB = NULL;                                                    \
-                                                                                                    \
-            /* Iterate through every ready list starting from the highest priority. */              \
-            while (uxTopPriority > tskIDLE_PRIORITY)                                                \
-            {                                                                                       \
-                if (listLIST_IS_EMPTY(&(pxReadyTasksLists[uxTopPriority])) == pdFALSE)              \
-                {                                                                                   \
-                    /* Get the TCB of the first task in the ready list. */                          \
-                    TCB_t *pxTCB = (TCB_t *)listGET_OWNER_OF_HEAD_ENTRY(&(pxReadyTasksLists[uxTopPriority])); \
-                                                                                                    \
-                    /* Check if this task has the earliest deadline or if there's a tie, */         \
-                    /* choose the one with the highest priority. */                                 \
-                    if (pxEarliestDeadlineTCB == NULL ||                                            \
-                        pxTCB->xRelativeDeadline < pxEarliestDeadlineTCB->xRelativeDeadline ||      \
-                        (pxTCB->xRelativeDeadline == pxEarliestDeadlineTCB->xRelativeDeadline &&    \
-                        pxTCB->uxPriority > pxEarliestDeadlineTCB->uxPriority))                    \
-                    {                                                                               \
-                        pxEarliestDeadlineTCB = pxTCB;                                              \
-                    }                                                                               \
-                }                                                                                   \
-                uxTopPriority--;                                                                    \
-            }                                                                                       \
-                                                                                                    \
-            /* Set the selected task as the current task. */                                        \
-            if (pxEarliestDeadlineTCB != NULL)                                                      \
-            {                                                                                       \
-                pxCurrentTCB = pxEarliestDeadlineTCB;                                               \
-            }                                                                                       \
-        } while (0)
-#endif /* configUSE_SCHEDULER_EDF */
-
-/*-----------------------------------------------------------*/
-
 /* pxDelayedTaskList and pxOverflowDelayedTaskList are switched when the tick
  * count overflows. */
 #define taskSWITCH_DELAYED_LISTS()                                                \
@@ -319,27 +280,43 @@
  * Place the task represented by pxTCB into the appropriate ready list for
  * the task.  By default it is inserted at the end of the list.
  * If configUSE_SCHEDULER_EDF is set to 1, the task is inserted in the ready
- * list based on its relative deadline and priority.
+ * list based on its deadline and priority.
  */
+
 #define prvAddTaskToReadyList( pxTCB )                                                                     \
     do {                                                                                                   \
         traceMOVED_TASK_TO_READY_STATE( pxTCB );                                                           \
         taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );                                                \
-        if ( configUSE_SCHEDULER_EDF == 1 && ( pxTCB )->xRelativeDeadline != NO_DEADLINE ) {                                                            \
-            List_t *pxReadyList = &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] );                         \
+        List_t *pxReadyList = &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] );                         \
+        if ( configUSE_SCHEDULER_EDF == 1 && ( pxTCB )->xAbsoluteDeadline != NO_DEADLINE ) {               \
             ListItem_t *pxIterator;                                                                        \
-        const ListItem_t *pxEndMarker = listGET_END_MARKER( pxReadyList );                                 \
+            TickType_t xTickSum = 0;                                                                      \
+            BaseType_t xPosition = 0;                                                                   \
+            const ListItem_t *pxEndMarker = listGET_END_MARKER( pxReadyList );                                 \
+            TCB_t *pxEndMarkerTCB = (TCB_t *)listGET_LIST_ITEM_OWNER(pxEndMarker);                        \
             for (pxIterator = listGET_HEAD_ENTRY(pxReadyList); pxIterator != pxEndMarker; pxIterator = listGET_NEXT(pxIterator)) { \
-                TCB_t *pxCurrentTCB = (TCB_t *)listGET_LIST_ITEM_OWNER(pxIterator);                        \
-                if ((pxTCB->xRelativeDeadline < pxCurrentTCB->xRelativeDeadline) ||                        \
-                    ((pxTCB->xRelativeDeadline == pxCurrentTCB->xRelativeDeadline) &&                      \
-                     (pxTCB->uxPriority > pxCurrentTCB->uxPriority))) {                                    \
-                    break;                                                                                 \
-                }                                                                                          \
+                TCB_t *pxSelectedTCB = (TCB_t *)listGET_LIST_ITEM_OWNER(pxIterator);                        \
+                xTickSum += pxSelectedTCB->xRelativeDeadline;                                               \
+                if (pxTCB->xAbsoluteDeadline < xTickSum) {                                                 \
+                    xTickSum -= pxSelectedTCB->xRelativeDeadline;                                           \
+                    break;                                                                                  \
+                }                                                                                           \
             }                                                                                              \
-            listINSERT_BEFORE(pxIterator, &(pxTCB->xStateListItem));                                       \
+            /* Update the relative deadline of the selected task and the tasks after it.*/                   \
+            listINSERT_BEFORE( pxReadyList, pxIterator, &(pxTCB->xStateListItem));                                       \
+            pxTCB->xRelativeDeadline = pxTCB->xAbsoluteDeadline - xTickSum;                                \
+            for (; pxIterator != pxEndMarker; pxIterator = listGET_NEXT(pxIterator)) {                      \
+                TCB_t *pxSelectedTCB = (TCB_t *)listGET_LIST_ITEM_OWNER(pxIterator);                         \
+                if ( pxSelectedTCB->xAbsoluteDeadline < NO_DEADLINE ) {                                    \
+                    pxSelectedTCB->xRelativeDeadline -= pxTCB->xRelativeDeadline;               \
+                }                                                                                           \
+                else                                                                                        \
+                {                                                                                           \
+                    break;                                                                                  \
+                }                                                                                           \
+            }                                                                                               \
         } else {                                                                                            \
-            listINSERT_END( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ), &( ( pxTCB )->xStateListItem ) ); \
+            listINSERT_END( pxReadyList, &( ( pxTCB )->xStateListItem ) ); \
         }                                                                                                  \
         tracePOST_MOVED_TASK_TO_READY_STATE( pxTCB );                                                      \
     } while( 0 )
@@ -506,6 +483,7 @@ typedef struct tskTaskControlBlock       /* The old naming convention is used to
     #endif
 
     #if ( configUSE_SCHEDULER_EDF == 1)
+        TickType_t xAbsoluteDeadline; /**< The absolute deadline of the task. */
         TickType_t xRelativeDeadline; /**< The relative deadline of the task. */
 
         #if ( configUSE_MUTEXES == 1 )
@@ -1805,6 +1783,7 @@ static void prvAddNewTaskToReadyList( TCB_t * pxNewTCB ) PRIVILEGED_FUNCTION;
             if( pxNewTCB != NULL )
             {
                 /* Initialize the EDF parameters. */
+                pxNewTCB->xAbsoluteDeadline = NO_DEADLINE;
                 pxNewTCB->xRelativeDeadline = NO_DEADLINE;
             }
         }
@@ -2002,15 +1981,18 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
     pxNewTCB->uxPriority = uxPriority;
     #if ( configUSE_MUTEXES == 1 )
     {
-        pxNewTCB->uxBasePriority = uxPriority;
+        #if ( configUSE_SCHEDULER_EDF == 1 )
+        {
+            pxNewTCB->xBaseRelativeDeadline = pxNewTCB->xRelativeDeadline;
+        }
+        #else /* configUSE_SCHEDULER_EDF */
+        {
+            pxNewTCB->uxBasePriority = uxPriority;
+        }
+        #endif /* configUSE_SCHEDULER_EDF */
     }
     #endif /* configUSE_MUTEXES */
 
-    #if ( configUSE_SCHEDULER_EDF == 1 )
-    {
-        pxNewTCB->xBaseRelativeDeadline = pxNewTCB->xRelativeDeadline;
-    }
-    #endif /* configUSE_SCHEDULER_EDF */
 
     vListInitialiseItem( &( pxNewTCB->xStateListItem ) );
     vListInitialiseItem( &( pxNewTCB->xEventListItem ) );
@@ -2156,20 +2138,11 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                 {
                     #if ( configUSE_SCHEDULER_EDF == 1 )
                     {
-                        if( pxNewTCB->xRelativeDeadline < pxCurrentTCB->xRelativeDeadline )
+                        if( ( pxNewTCB->xAbsoluteDeadline < pxCurrentTCB->xRelativeDeadline ) ||
+                            ( ( pxNewTCB->xAbsoluteDeadline == pxCurrentTCB->xRelativeDeadline ) && 
+                              ( pxNewTCB->uxPriority > pxCurrentTCB->uxPriority ) ) )
                         {
                             pxCurrentTCB = pxNewTCB;
-                        }
-                        else if ( pxNewTCB->xRelativeDeadline == pxCurrentTCB->xRelativeDeadline )
-                        {
-                            if( pxCurrentTCB->uxPriority <= pxNewTCB->uxPriority )
-                            {
-                                pxCurrentTCB = pxNewTCB;
-                            }
-                            else
-                            {
-                                mtCOVERAGE_TEST_MARKER();
-                            }
                         }
                         else
                         {
@@ -3121,23 +3094,22 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
 #if ( configUSE_SCHEDULER_EDF == 1 )
 
     void vTaskAttachDeadline( TaskHandle_t xTask,
-                           TickType_t xNewRelativeDeadline )
+                           TickType_t xNewAbsoluteDeadline )
     {
         TCB_t * pxTCB;
-        TickType_t xCurrentBaseRelativeDeadline, xRelativeDeadlineUsedOnEntry;
-        UBaseType_t uxCurrentBasePriority, uxPriorityUsedOnEntry;
+        TickType_t xCurrentBaseAbsoluteDeadline;
         BaseType_t xYieldRequired = pdFALSE;
 
         #if ( configNUMBER_OF_CORES > 1 )
             BaseType_t xYieldForTask = pdFALSE;
         #endif
 
-        configASSERT( xNewRelativeDeadline < NO_DEADLINE );
+        configASSERT( xNewAbsoluteDeadline < NO_DEADLINE );
 
         /* Ensure the new deadline is valid. */
-        if( xNewRelativeDeadline >= ( TickType_t ) NO_DEADLINE )
+        if( xNewAbsoluteDeadline >= ( TickType_t ) NO_DEADLINE )
         {
-            xNewRelativeDeadline = ( TickType_t ) NO_DEADLINE;
+            xNewAbsoluteDeadline = ( TickType_t ) NO_DEADLINE;
         }
         else
         {
@@ -3151,23 +3123,15 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
             pxTCB = prvGetTCBFromHandle( xTask );
             configASSERT( pxTCB != NULL );
 
-            traceTASK_DEADLINE_ATTACH( pxTCB, xNewRelativeDeadline );
+            traceTASK_DEADLINE_ATTACH( pxTCB, xNewAbsoluteDeadline );
 
-            #if ( configUSE_MUTEXES == 1 )
-            {
-                xCurrentBaseRelativeDeadline = pxTCB->xBaseRelativeDeadline;
-            }
-            #else
-            {
-                xCurrentBaseRelativeDeadline = pxTCB->xRelativeDeadline;
-            }
-            #endif
+            xCurrentBaseAbsoluteDeadline = pxTCB->xAbsoluteDeadline;
 
-            if( xCurrentBaseRelativeDeadline != xNewRelativeDeadline )
+            if( xCurrentBaseAbsoluteDeadline != xNewAbsoluteDeadline )
             {
                 /* The deadline change may have readied a task of lower
                  * deadline than a running task. */
-                if( xNewRelativeDeadline > xCurrentBaseRelativeDeadline )
+                if( xNewAbsoluteDeadline < xCurrentBaseAbsoluteDeadline )
                 {
                     #if ( configNUMBER_OF_CORES == 1 )
                     {
@@ -3176,7 +3140,7 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                             /* The deadline of a task other than the currently
                              * running task is being lowered.  Is the deadline being
                              * lowered under that of the running task? */
-                            if( xNewRelativeDeadline < pxCurrentTCB->xRelativeDeadline )
+                            if( xNewAbsoluteDeadline < pxCurrentTCB->xRelativeDeadline )
                             {
                                 xYieldRequired = pdTRUE;
                             }
@@ -3219,40 +3183,39 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                      * new deadline of the task being modified. */
                 }
 
-                #if ( configUSE_MUTEXES == 1 )
-                {
-                    /* Only change the deadline being used if the task is not
-                     * currently using an inherited deadline or the new deadline
-                     * is lower than the inherited deadline. */
-                    if( ( pxTCB->xBaseRelativeDeadline == pxTCB->xRelativeDeadline ) || ( xNewRelativeDeadline < pxTCB->xRelativeDeadline ) )
-                    {
-                        pxTCB->xRelativeDeadline = xNewRelativeDeadline;
-                    }
-                    else
-                    {
-                        mtCOVERAGE_TEST_MARKER();
-                    }
-
-                    /* The base priority gets set whatever. */
-                    pxTCB->xBaseRelativeDeadline = xNewRelativeDeadline;
-                }
-                #else /* if ( configUSE_MUTEXES == 1 ) */
-                {
-                    pxTCB->xRelativeDeadline = xNewRelativeDeadline;
-                }
-                #endif /* if ( configUSE_MUTEXES == 1 ) */
+                pxTCB->xAbsoluteDeadline = xNewAbsoluteDeadline;
 
                 /* Only reset the event list item value if the value is not
                  * being used for anything else. */
                 if( ( listGET_LIST_ITEM_VALUE( &( pxTCB->xEventListItem ) ) & taskEVENT_LIST_ITEM_VALUE_IN_USE ) == ( ( TickType_t ) 0U ) )
                 {
-                    listSET_LIST_ITEM_VALUE( &( pxTCB->xEventListItem ), ( ( TickType_t ) -xNewRelativeDeadline ) ); //TODO: Check if this is correct
+                    listSET_LIST_ITEM_VALUE( &( pxTCB->xEventListItem ), ( (TickType_t) NO_DEADLINE - ( TickType_t ) xNewAbsoluteDeadline ) );
                 }
                 else
                 {
                     mtCOVERAGE_TEST_MARKER();
                 }
 
+                /* If the scheduler is not already running, make this task the
+                 * current task if it is the highest priority task to be created
+                 * so far. */
+                if( xSchedulerRunning == pdFALSE )
+                {
+                    if( ( pxTCB->xAbsoluteDeadline < pxCurrentTCB->xRelativeDeadline ) ||
+                        ( ( pxTCB->xAbsoluteDeadline == pxCurrentTCB->xRelativeDeadline ) && 
+                            ( pxTCB->uxPriority > pxCurrentTCB->uxPriority ) ) )
+                    {
+                        pxCurrentTCB = pxTCB;
+                    }
+                    else
+                    {
+                        mtCOVERAGE_TEST_MARKER();
+                    }
+                }
+                else
+                {
+                    mtCOVERAGE_TEST_MARKER();
+                }
                 /* If the task is in the blocked or suspended list we need do
                  * nothing more than change its priority variable. However, if
                  * the task is in a ready list it needs to be removed and placed
@@ -3277,6 +3240,8 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                     prvAddTaskToReadyList( pxTCB );
                 }
                 else
+
+                
                 {
                     #if ( configNUMBER_OF_CORES == 1 )
                     {
@@ -3291,35 +3256,35 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                     }
                     #endif
                 }
-
-                if( xYieldRequired != pdFALSE )
-                {
-                    /* The running task priority is set down. Request the task to yield. */
-                    taskYIELD_TASK_CORE_IF_USING_PREEMPTION( pxTCB );
-                }
-                else
-                {
-                    #if ( configNUMBER_OF_CORES > 1 )
-                        if( xYieldForTask != pdFALSE )
-                        {
-                            /* The priority of the task is being raised. If a running
-                             * task has priority lower than this task, it should yield
-                             * for this task. */
-                            taskYIELD_ANY_CORE_IF_USING_PREEMPTION( pxTCB );
-                        }
-                        else
-                    #endif /* if ( configNUMBER_OF_CORES > 1 ) */
-                    {
-                        mtCOVERAGE_TEST_MARKER();
-                    }
-                }
+                
+                // TODO: Understand why uncommenting this breaks the code
+                // if( xYieldRequired != pdFALSE )
+                // {
+                //     /* The running task priority is set down. Request the task to yield. */
+                //     taskYIELD_TASK_CORE_IF_USING_PREEMPTION( pxTCB );
+                // }
+                // else
+                // {
+                //     #if ( configNUMBER_OF_CORES > 1 )
+                //         if( xYieldForTask != pdFALSE )
+                //         {
+                //             /* The priority of the task is being raised. If a running
+                //              * task has priority lower than this task, it should yield
+                //              * for this task. */
+                //             taskYIELD_ANY_CORE_IF_USING_PREEMPTION( pxTCB );
+                //         }
+                //         else
+                //     #endif /* if ( configNUMBER_OF_CORES > 1 ) */
+                //     {
+                //         mtCOVERAGE_TEST_MARKER();
+                //     }
+                // }
             }
         }
         taskEXIT_CRITICAL();
 
         traceRETURN_vTaskAttachDeadline();
     }
-
 #endif /* configUSE_SCHEDULER_EDF */
 
 /*-----------------------------------------------------------*/
@@ -3802,19 +3767,36 @@ static void prvInitialiseNewTask( TaskFunction_t pxTaskCode,
                     {
                         /* Ready lists can be accessed so move the task from the
                          * suspended list to the ready list directly. */
-                        if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                        #if ( configUSE_SCHEDULER_EDF == 1 )
                         {
-                            xYieldRequired = pdTRUE;
+                            if(  ( pxTCB->xAbsoluteDeadline < pxCurrentTCB->xRelativeDeadline ) ||
+                            ( ( pxTCB->xAbsoluteDeadline == pxCurrentTCB->xRelativeDeadline ) && 
+                              ( pxTCB->uxPriority > pxCurrentTCB->uxPriority ) )  )
+                            {
+                                xYieldRequired = pdTRUE;
+                            }
+                            else
+                            {
+                                mtCOVERAGE_TEST_MARKER();
+                            }
+                        }
+                        #else /* configUSE_SCHEDULER_EDF */
+                        {
+                            if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                            {
+                                xYieldRequired = pdTRUE;
 
-                            /* Mark that a yield is pending in case the user is not
-                             * using the return value to initiate a context switch
-                             * from the ISR using the port specific portYIELD_FROM_ISR(). */
-                            xYieldPendings[ 0 ] = pdTRUE;
+                                /* Mark that a yield is pending in case the user is not
+                                * using the return value to initiate a context switch
+                                * from the ISR using the port specific portYIELD_FROM_ISR(). */
+                                xYieldPendings[ 0 ] = pdTRUE;
+                            }
+                            else
+                            {
+                                mtCOVERAGE_TEST_MARKER();
+                            }
                         }
-                        else
-                        {
-                            mtCOVERAGE_TEST_MARKER();
-                        }
+                        #endif /* configUSE_SCHEDULER_EDF */
                     }
                     #endif /* #if ( configNUMBER_OF_CORES == 1 ) */
 
@@ -5017,16 +4999,36 @@ BaseType_t xTaskCatchUpTicks( TickType_t xTicksToCatchUp )
                         /* Preemption is on, but a context switch should only be
                          * performed if the unblocked task has a priority that is
                          * higher than the currently executing task. */
-                        if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+
+                        #if ( configUSE_SCHEDULER_EDF == 1 )
                         {
-                            /* Pend the yield to be performed when the scheduler
-                             * is unsuspended. */
-                            xYieldPendings[ 0 ] = pdTRUE;
+                            if(  ( pxTCB->xAbsoluteDeadline < pxCurrentTCB->xRelativeDeadline ) ||
+                            ( ( pxTCB->xAbsoluteDeadline == pxCurrentTCB->xRelativeDeadline ) && 
+                              ( pxTCB->uxPriority > pxCurrentTCB->uxPriority ) ) )
+                            {
+                                /* Pend the yield to be performed when the scheduler
+                                 * is unsuspended. */
+                                xYieldPendings[ 0 ] = pdTRUE;
+                            }
+                            else
+                            {
+                                mtCOVERAGE_TEST_MARKER();
+                            }
                         }
-                        else
+                        #else /* configUSE_SCHEDULER_EDF */
                         {
-                            mtCOVERAGE_TEST_MARKER();
+                            if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                            {
+                                /* Pend the yield to be performed when the scheduler
+                                * is unsuspended. */
+                                xYieldPendings[ 0 ] = pdTRUE;
+                            }
+                            else
+                            {
+                                mtCOVERAGE_TEST_MARKER();
+                            }
                         }
+                        #endif /* configUSE_SCHEDULER_EDF */
                     }
                     #else /* #if ( configNUMBER_OF_CORES == 1 ) */
                     {
@@ -5322,12 +5324,9 @@ BaseType_t xTaskIncrementTick( void )
         #endif
     }
 
-    // TODO: Find a more efficient way to do this
-    // For example: only update the relative deadlines of the tasks that are in the ready list
-    // And the others could be updated when taken out of their respective lists
     #if ( configUSE_SCHEDULER_EDF == 1 )
     {
-        /* Iterate through every task and update their relative deadlines. */
+        /* Iterate through every priority and update the relative deadline of the first task in each ready list. */
         List_t *pxList;
         ListItem_t *pxListItem;
         TCB_t *pxTCB;
@@ -5337,119 +5336,26 @@ BaseType_t xTaskIncrementTick( void )
         for (uxPriority = 0; uxPriority < configMAX_PRIORITIES; uxPriority++)
         {
             pxList = &pxReadyTasksLists[uxPriority];
-            pxListItem = listGET_HEAD_ENTRY(pxList);
-
-            while (pxListItem != listGET_END_MARKER(pxList))
+            if (listCURRENT_LIST_LENGTH(pxList) > 0)
             {
+            pxListItem = listGET_HEAD_ENTRY(pxList);
             pxTCB = listGET_LIST_ITEM_OWNER(pxListItem);
-            pxListItem = listGET_NEXT(pxListItem);
 
             if (pxTCB->xRelativeDeadline < NO_DEADLINE)
             {
-                pxTCB->xRelativeDeadline--;
-
                 if (pxTCB->xRelativeDeadline == 0)
                 {
                     vTaskMissedDeadline(pxTCB);
                 }
+                else
+                {
+                    pxTCB->xRelativeDeadline--;
+                }
             }
-            }
-        }
-
-        /* Iterate through suspended tasks. */
-        pxList = &xSuspendedTaskList;
-        pxListItem = listGET_HEAD_ENTRY(pxList);
-
-        while (pxListItem != listGET_END_MARKER(pxList))
-        {
-            pxTCB = listGET_LIST_ITEM_OWNER(pxListItem);
-            pxListItem = listGET_NEXT(pxListItem);
-
-            if (pxTCB->xRelativeDeadline < NO_DEADLINE)
-            {
-            pxTCB->xRelativeDeadline--;
-
-            if (pxTCB->xRelativeDeadline == 0)
-            {
-                vTaskMissedDeadline(pxTCB);
-            }
-            }
-        }
-
-        /* Iterate through pending ready tasks. */
-        pxList = &xPendingReadyList;
-        pxListItem = listGET_HEAD_ENTRY(pxList);
-
-        while (pxListItem != listGET_END_MARKER(pxList))
-        {
-            pxTCB = listGET_LIST_ITEM_OWNER(pxListItem);
-            pxListItem = listGET_NEXT(pxListItem);
-
-            if (pxTCB->xRelativeDeadline < NO_DEADLINE)
-            {
-            pxTCB->xRelativeDeadline--;
-
-            if (pxTCB->xRelativeDeadline == 0)
-            {
-                vTaskMissedDeadline(pxTCB);
-            }
-            }
-        }
-
-        /* Iterate through blocked tasks. */
-        pxList = pxDelayedTaskList;
-        pxListItem = listGET_HEAD_ENTRY(pxList);
-
-        while (pxListItem != listGET_END_MARKER(pxList))
-        {
-            pxTCB = listGET_LIST_ITEM_OWNER(pxListItem);
-            pxListItem = listGET_NEXT(pxListItem);
-
-            if (pxTCB->xRelativeDeadline < NO_DEADLINE)
-            {
-            pxTCB->xRelativeDeadline--;
-
-            if (pxTCB->xRelativeDeadline == 0)
-            {
-                vTaskMissedDeadline(pxTCB);
-            }
-            }
-        }
-
-        /* Iterate through overflowed blocked tasks. */
-        pxList = pxOverflowDelayedTaskList;
-        pxListItem = listGET_HEAD_ENTRY(pxList);
-
-        while (pxListItem != listGET_END_MARKER(pxList))
-        {
-            pxTCB = listGET_LIST_ITEM_OWNER(pxListItem);
-            pxListItem = listGET_NEXT(pxListItem);
-
-            if (pxTCB->xRelativeDeadline < NO_DEADLINE)
-            {
-            pxTCB->xRelativeDeadline--;
-
-            if (pxTCB->xRelativeDeadline == 0)
-            {
-                vTaskMissedDeadline(pxTCB);
-            }
-            }
-        }
-
-        /* Check the currently running task. */
-        pxTCB = pxCurrentTCB;
-        if (pxTCB->xRelativeDeadline < NO_DEADLINE)
-        {
-            pxTCB->xRelativeDeadline--;
-
-            if (pxTCB->xRelativeDeadline == 0)
-            {
-            vTaskMissedDeadline(pxTCB);
             }
         }
     }
     #endif /* configUSE_SCHEDULER_EDF */
-
 
     traceRETURN_xTaskIncrementTick( xSwitchRequired );
 
@@ -5465,7 +5371,6 @@ BaseType_t xTaskIncrementTick( void )
     {
         TCB_t *pxTCB = xTask;
         traceTASK_MISSED_DEADLINE(pxTCB);
-        pxTCB->xRelativeDeadline = NO_DEADLINE; // for now, we just discard the deadline
     }
 
     TickType_t xTaskGetRelativeDeadline( TaskHandle_t xTask)
@@ -5473,6 +5378,14 @@ BaseType_t xTaskIncrementTick( void )
         TCB_t * pxTCB = xTask;
         return pxTCB->xRelativeDeadline;
     }
+
+    TickType_t xTaskGetAbsoluteDeadline( TaskHandle_t xTask)
+    {
+        TCB_t * pxTCB = xTask;
+        return pxTCB->xAbsoluteDeadline;
+    }
+
+
 #endif /* configUSE_SCHEDULER_EDF */
 
 /*-----------------------------------------------------------*/
@@ -5670,15 +5583,8 @@ BaseType_t xTaskIncrementTick( void )
             /* More details at: https://github.com/FreeRTOS/FreeRTOS-Kernel/blob/main/MISRA.md#rule-115 */
             /* coverity[misra_c_2012_rule_11_5_violation] */
             
-            #if ( configUSE_SCHEDULER_EDF == 1 )
-            {
-                taskSELECT_EARLIEST_DEADLINE_TASK();
-            }
-            #else /* configUSE_SCHEDULER_EDF */
-            {
-                taskSELECT_HIGHEST_PRIORITY_TASK();
-            }
-            #endif /* configUSE_SCHEDULER_EDF */
+            taskSELECT_HIGHEST_PRIORITY_TASK();
+
             traceTASK_SWITCHED_IN();
 
             /* Macro to inject port specific behaviour immediately after
@@ -5960,21 +5866,39 @@ BaseType_t xTaskRemoveFromEventList( const List_t * const pxEventList )
 
     #if ( configNUMBER_OF_CORES == 1 )
     {
-        if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
+        #if ( configUSE_SCHEDULER_EDF == 1 )
         {
-            /* Return true if the task removed from the event list has a higher
-             * priority than the calling task.  This allows the calling task to know if
-             * it should force a context switch now. */
-            xReturn = pdTRUE;
+            if(( pxUnblockedTCB->xRelativeDeadline < pxCurrentTCB->xRelativeDeadline ) ||
+               (( pxUnblockedTCB->xRelativeDeadline == pxCurrentTCB->xRelativeDeadline ) &&
+                ( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )))
+            {
+                xReturn = pdTRUE;
+                xYieldPendings[ 0 ] = pdTRUE;
+            }
+            else
+            {
+                xReturn = pdFALSE;
+            }
+        }
+        #else /* configUSE_SCHEDULER_EDF */
+        {
+            if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
+            {
+                /* Return true if the task removed from the event list has a higher
+                * priority than the calling task.  This allows the calling task to know if
+                * it should force a context switch now. */
+                xReturn = pdTRUE;
 
-            /* Mark that a yield is pending in case the user is not using the
-             * "xHigherPriorityTaskWoken" parameter to an ISR safe FreeRTOS function. */
-            xYieldPendings[ 0 ] = pdTRUE;
+                /* Mark that a yield is pending in case the user is not using the
+                * "xHigherPriorityTaskWoken" parameter to an ISR safe FreeRTOS function. */
+                xYieldPendings[ 0 ] = pdTRUE;
+            }
+            else
+            {
+                xReturn = pdFALSE;
+            }
         }
-        else
-        {
-            xReturn = pdFALSE;
-        }
+        #endif /* configUSE_SCHEDULER_EDF */
     }
     #else /* #if ( configNUMBER_OF_CORES == 1 ) */
     {
@@ -6043,14 +5967,27 @@ void vTaskRemoveFromUnorderedEventList( ListItem_t * pxEventListItem,
 
     #if ( configNUMBER_OF_CORES == 1 )
     {
-        if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
+        #if ( configUSE_SCHEDULER_EDF == 1 )
         {
-            /* The unblocked task has a priority above that of the calling task, so
-             * a context switch is required.  This function is called with the
-             * scheduler suspended so xYieldPending is set so the context switch
-             * occurs immediately that the scheduler is resumed (unsuspended). */
-            xYieldPendings[ 0 ] = pdTRUE;
+            if(( pxUnblockedTCB->xRelativeDeadline < pxCurrentTCB->xRelativeDeadline ) ||
+               (( pxUnblockedTCB->xRelativeDeadline == pxCurrentTCB->xRelativeDeadline ) &&
+                ( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )))
+            {
+                xYieldPendings[ 0 ] = pdTRUE;
+            }
         }
+        #else /* configUSE_SCHEDULER_EDF */
+        {
+            if( pxUnblockedTCB->uxPriority > pxCurrentTCB->uxPriority )
+            {
+                /* The unblocked task has a priority above that of the calling task, so
+                * a context switch is required.  This function is called with the
+                * scheduler suspended so xYieldPending is set so the context switch
+                * occurs immediately that the scheduler is resumed (unsuspended). */
+                xYieldPendings[ 0 ] = pdTRUE;
+            }
+        }
+        #endif /* configUSE_SCHEDULER_EDF */
     }
     #else /* #if ( configNUMBER_OF_CORES == 1 ) */
     {
@@ -8804,24 +8741,49 @@ TickType_t uxTaskResetEventItemValue( void )
 
                 #if ( configNUMBER_OF_CORES == 1 )
                 {
-                    if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                    #if ( configUSE_SCHEDULER_EDF == 1 )
                     {
-                        /* The notified task has a priority above the currently
-                         * executing task so a yield is required. */
-                        if( pxHigherPriorityTaskWoken != NULL )
+                        if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
                         {
-                            *pxHigherPriorityTaskWoken = pdTRUE;
-                        }
+                            /* The notified task has a priority above the currently
+                             * executing task so a yield is required. */
+                            if( pxHigherPriorityTaskWoken != NULL )
+                            {
+                                *pxHigherPriorityTaskWoken = pdTRUE;
+                            }
 
-                        /* Mark that a yield is pending in case the user is not
-                         * using the "xHigherPriorityTaskWoken" parameter in an ISR
-                         * safe FreeRTOS function. */
-                        xYieldPendings[ 0 ] = pdTRUE;
+                            /* Mark that a yield is pending in case the user is not
+                             * using the "xHigherPriorityTaskWoken" parameter in an ISR
+                             * safe FreeRTOS function. */
+                            xYieldPendings[ 0 ] = pdTRUE;
+                        }
+                        else
+                        {
+                            mtCOVERAGE_TEST_MARKER();
+                        }
                     }
-                    else
+                    #else /* #if ( configUSE_SCHEDULER_EDF == 1 ) */
                     {
-                        mtCOVERAGE_TEST_MARKER();
+                        if( pxTCB->uxPriority > pxCurrentTCB->uxPriority )
+                        {
+                            /* The notified task has a priority above the currently
+                             * executing task so a yield is required. */
+                            if( pxHigherPriorityTaskWoken != NULL )
+                            {
+                                *pxHigherPriorityTaskWoken = pdTRUE;
+                            }
+
+                            /* Mark that a yield is pending in case the user is not
+                             * using the "xHigherPriorityTaskWoken" parameter in an ISR
+                             * safe FreeRTOS function. */
+                            xYieldPendings[ 0 ] = pdTRUE;
+                        }
+                        else
+                        {
+                            mtCOVERAGE_TEST_MARKER();
+                        }
                     }
+                    #endif /* #if ( configUSE_SCHEDULER_EDF == 1 ) */
                 }
                 #else /* #if ( configNUMBER_OF_CORES == 1 ) */
                 {

@@ -384,14 +384,25 @@ typedef struct xLIST
         ( ( pxList )->uxNumberOfItems ) = ( UBaseType_t ) ( ( ( pxList )->uxNumberOfItems ) + 1U ); \
     } while( 0 )
 
-#define listINSERT_BEFORE(pxIterator, pxNewListItem)          \
+#define listINSERT_BEFORE( pxList, pxIterator, pxNewListItem)          \
     do {                                                      \
-        (pxNewListItem)->pxNext = (pxIterator);               \
-        (pxNewListItem)->pxPrevious = (pxIterator)->pxPrevious; \
-        (pxIterator)->pxPrevious->pxNext = (pxNewListItem);   \
-        (pxIterator)->pxPrevious = (pxNewListItem);           \
-        (pxNewListItem)->pxContainer = (pxIterator)->pxContainer; \
-        ((pxIterator)->pxContainer->uxNumberOfItems)++;       \
+        /* Only effective when configASSERT() is also defined, these tests may catch \
+         * the list data structures being overwritten in memory.  They will not catch \
+         * data errors caused by incorrect configuration or use of FreeRTOS. */ \
+        listTEST_LIST_INTEGRITY( ( pxList ) );                                  \
+        listTEST_LIST_ITEM_INTEGRITY( ( pxNewListItem ) );                      \
+                                                                                \
+        /* Insert a new list item before ( pxIterator ). */                     \
+        (pxNewListItem)->pxNext = (pxIterator);                                 \
+        (pxNewListItem)->pxPrevious = (pxIterator)->pxPrevious;                 \
+                                                                                \
+        (pxIterator)->pxPrevious->pxNext = (pxNewListItem);                     \
+        (pxIterator)->pxPrevious = (pxNewListItem);                             \
+                                                                                \
+        /* Remember which list the item is in. */                               \
+        (pxNewListItem)->pxContainer = ( pxList );                              \
+                                                                                \
+        ( ( pxList )->uxNumberOfItems ) = ( UBaseType_t ) ( ( ( pxList )->uxNumberOfItems ) + 1U ); \
     } while(0)
 
 
